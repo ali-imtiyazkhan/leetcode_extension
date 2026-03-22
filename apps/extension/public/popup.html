@@ -9,11 +9,6 @@
 <body>
   <div class="header">LeetCode Collab</div>
   <div id="status">Connecting...</div>
-  <script>
-    // Simple status check
-    chrome.runtime.sendMessage({type: 'GET_STATUS'}, (response) => {
-      document.getElementById('status').innerText = response.status;
-    });
-  </script>
+  <script src="popup.js"></script>
 </body>
 </html>

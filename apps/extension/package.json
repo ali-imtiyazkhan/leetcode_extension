@@ -2,8 +2,8 @@
   "name": "@leetcode-collab/extension",
   "version": "1.0.0",
   "scripts": {
-    "dev": "esbuild src/background.ts src/content.ts --bundle --outdir=dist --watch",
-    "build": "esbuild src/background.ts src/content.ts --bundle --outdir=dist"
+    "dev": "esbuild src/background.ts src/content.ts src/popup.ts --bundle --outdir=dist --watch",
+    "build": "esbuild src/background.ts src/content.ts src/popup.ts --bundle --outdir=dist"
   },
   "dependencies": {
     "@leetcode-collab/types": "*",
