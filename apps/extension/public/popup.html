@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { width: 200px; font-family: sans-serif; padding: 10px; background: #1e1e1e; color: white; }
+    .header { font-weight: bold; margin-bottom: 10px; color: #007aff; }
+  </style>
+</head>
+<body>
+  <div class="header">LeetCode Collab</div>
+  <div id="status">Connecting...</div>
+  <script>
+    // Simple status check
+    chrome.runtime.sendMessage({type: 'GET_STATUS'}, (response) => {
+      document.getElementById('status').innerText = response.status;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+#leetcode-collab-root {
+  transition: all 0.3s ease;
+}
+
+#leetcode-collab-root button:hover {
+  background: #0056b3 !important;
+}

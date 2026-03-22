@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "LeetCode Collab",
+  "version": "1.0",
+  "description": "Collaborate on LeetCode with live presence and video calls.",
+  "permissions": ["storage", "tabs", "activeTab", "scripting"],
+  "host_permissions": [
+    "*://leetcode.com/problems/*",
+    "http://localhost:3001/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://leetcode.com/problems/*"],
+      "js": ["dist/content.js"],
+      "css": ["src/styles.css"]
+    }
+  ],
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "action": {
+    "default_popup": "public/popup.html"
+  }
+}
