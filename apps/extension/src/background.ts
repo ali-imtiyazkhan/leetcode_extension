@@ -37,7 +37,7 @@ function handleSocketEvent(type: string, payload: any) {
   });
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'UPDATE_SLUG') {
     currentSlug = message.slug;
     sendSocketMessage('join_problem', { slug: currentSlug, user: { id: 'user-' + Math.floor(Math.random() * 1000) } });
@@ -49,6 +49,8 @@ chrome.runtime.onMessage.addListener((message) => {
     sendSocketMessage('answer_call', { to: message.to, from: 'me', type: 'answer', payload: message.answer });
   } else if (message.type === 'ICE_CANDIDATE') {
     sendSocketMessage('ice_candidate', { to: message.to, from: 'me', type: 'ice-candidate', payload: message.candidate });
+  } else if (message.type === 'GET_STATUS') {
+    sendResponse({ status: 'Connected to LeetCollab Backend' });
   }
 });
 
