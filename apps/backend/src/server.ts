@@ -49,9 +49,10 @@ io.on('connection', (socket) => {
     io.to(data.to).emit('call_answered', data);
   });
 
-  socket.on('broadcast_invite', ({ slug, from }: { slug: string, from: User }) => {
-    socket.to(slug).emit('incoming_broadcast', { from });
-    console.log(`Broadcast from ${from.id} in ${slug}`);
+  socket.on('broadcast_invite', ({ slug, from }: { slug: string, from?: User }) => {
+    const sender = from && from.id ? from : { id: socket.id };
+    socket.to(slug).emit('incoming_broadcast', { from: sender });
+    console.log(`Broadcast correctly from ${sender.id} in room slug: ${slug}`);
   });
 
   socket.on('ice_candidate', (data: SignalMessage) => {

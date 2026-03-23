@@ -1,32 +1,45 @@
+import { io, Socket } from 'socket.io-client';
 import { User, SignalMessage } from '@leetcode-collab/types';
 
-let socket: WebSocket | null = null;
+let socket: Socket | null = null;
 let currentSlug: string | null = null;
 
 function connect() {
-  const wsUrl = "ws://localhost:3001/socket.io/?EIO=4&transport=websocket";
-  socket = new WebSocket(wsUrl);
+  // Use http://127.0.0.1:3001 to bypass local DNS ipv6 quirks if any on windows solvers
+  socket = io("http://127.0.0.1:3001", {
+    transports: ['websocket'], // Force websocket for extension context
+  });
 
-  socket.onopen = () => {
-    console.log('Connected to backend');
+  socket.on('connect', () => {
+    console.log('Connected to backend:', socket?.id);
     if (currentSlug) {
-      sendSocketMessage('join_problem', { slug: currentSlug, user: { id: 'user-' + Math.floor(Math.random() * 1000) } });
+      socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id } });
     }
-  };
+  });
 
-  socket.onmessage = (event) => {
-    let rawData = event.data as string;
-    if (rawData.startsWith('42')) {
-      const [type, payload] = JSON.parse(rawData.substring(2));
-      handleSocketEvent(type, payload);
-    }
-  };
-}
+  socket.on('room_users', (users) => {
+    handleSocketEvent('room_users', { users });
+  });
 
-function sendSocketMessage(type: string, payload: any) {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(`42${JSON.stringify([type, payload])}`);
-  }
+  socket.on('incoming_call', (data) => {
+    handleSocketEvent('incoming_call', data);
+  });
+
+  socket.on('incoming_broadcast', (data) => {
+    handleSocketEvent('incoming_broadcast', data);
+  });
+
+  socket.on('call_answered', (data) => {
+    handleSocketEvent('answer', data);
+  });
+
+  socket.on('ice_candidate', (data) => {
+    handleSocketEvent('ice-candidate', data);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Disconnected from backend');
+  });
 }
 
 function handleSocketEvent(type: string, payload: any) {
@@ -40,15 +53,16 @@ function handleSocketEvent(type: string, payload: any) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'UPDATE_SLUG') {
     currentSlug = message.slug;
-    sendSocketMessage('join_problem', { slug: currentSlug, user: { id: 'user-' + Math.floor(Math.random() * 1000) } });
+    socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id } });
   } else if (message.type === 'BROADCAST_REQUEST') {
-    sendSocketMessage('broadcast_invite', { slug: currentSlug, from: { id: 'me' } }); 
+    const activeSlug = message.slug || currentSlug;
+    socket?.emit('broadcast_invite', { slug: activeSlug, from: { id: socket?.id || 'unknown' } }); 
   } else if (message.type === 'SEND_OFFER') {
-    sendSocketMessage('call_user', { to: message.to, from: 'me', type: 'offer', payload: message.offer });
+    socket?.emit('call_user', { to: message.to, from: socket?.id, type: 'offer', payload: message.offer });
   } else if (message.type === 'SEND_ANSWER') {
-    sendSocketMessage('answer_call', { to: message.to, from: 'me', type: 'answer', payload: message.answer });
+    socket?.emit('answer_call', { to: message.to, from: socket?.id, type: 'answer', payload: message.answer });
   } else if (message.type === 'ICE_CANDIDATE') {
-    sendSocketMessage('ice_candidate', { to: message.to, from: 'me', type: 'ice-candidate', payload: message.candidate });
+    socket?.emit('ice_candidate', { to: message.to, from: socket?.id, type: 'ice-candidate', payload: message.candidate });
   } else if (message.type === 'GET_STATUS') {
     sendResponse({ status: 'Connected to LeetCollab Backend' });
   }

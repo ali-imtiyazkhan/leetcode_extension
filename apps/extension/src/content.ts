@@ -7,10 +7,22 @@ function getSlug(): string | null {
   return parts.includes('problems') ? parts[parts.indexOf('problems') + 1] : null;
 }
 
-const currentSlug = getSlug();
+let currentSlug = getSlug();
 if (currentSlug) {
   chrome.runtime.sendMessage({ type: 'UPDATE_SLUG', slug: currentSlug });
 }
+
+// Support single-page application (SPA) navigation on LeetCode
+setInterval(() => {
+  const newSlug = getSlug();
+  if (newSlug !== currentSlug) {
+    currentSlug = newSlug;
+    if (currentSlug) {
+      console.log('Slug changed view:', currentSlug);
+      chrome.runtime.sendMessage({ type: 'UPDATE_SLUG', slug: currentSlug });
+    }
+  }
+}, 2000);
 
 // Global state for WebRTC
 let peerConnection: RTCPeerConnection | null = null;
@@ -45,43 +57,45 @@ container.innerHTML = `
       <button id="decline-call" style="background: #dc3545; color: white; border: none; border-radius: 4px; padding: 6px 10px; cursor: pointer; flex: 1; font-weight: bold; font-size: 12px;">Decline</button>
     </div>
   </div>
-  <div id="video-container" style="display:none; margin-top: 15px; border-top: 1px solid #333; padding-top: 10px;">
-    <video id="local-video" autoplay muted style="width: 100%; border-radius: 8px; background: #000; margin-bottom: 5px;"></video>
-    <video id="remote-video" autoplay style="width: 100%; border-radius: 8px; background: #000;"></video>
-    <button id="end-call" style="width: 100%; background: #dc3545; color: white; border: none; border-radius: 8px; padding: 8px; cursor: pointer; margin-top: 10px; font-weight: bold; font-size: 12px;">End Call</button>
+  <div id="video-container" style="display:none; position: relative; width: 100%; height: 180px; border-radius: 12px; overflow: hidden; background: #000; margin-top: 15px; border: 1px solid #333;">
+    <video id="remote-video" autoplay style="width: 100%; height: 100%; object-fit: cover;"></video>
+    <video id="local-video" autoplay muted style="position: absolute; bottom: 8px; right: 8px; width: 65px; height: 85px; border-radius: 8px; object-fit: cover; border: 2px solid #222; box-shadow: 0 4px 10px rgba(0,0,0,0.4); z-index: 10;"></video>
+    <button id="end-call" style="position: absolute; bottom: 8px; left: 8px; background: #ff3b30; color: white; border: none; border-radius: 50%; width: 34px; height: 34px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); z-index: 10;" title="End Call">
+      ✕
+    </button>
   </div>
 `;
 
 document.body.appendChild(container);
 
 async function startCall(isCaller: boolean, remoteId: string) {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        const localVideo = document.getElementById('local-video') as HTMLVideoElement;
-        if (localVideo) localVideo.srcObject = localStream;
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    const localVideo = document.getElementById('local-video') as HTMLVideoElement;
+    if (localVideo) localVideo.srcObject = localStream;
 
-        peerConnection = new RTCPeerConnection(configuration);
-        localStream.getTracks().forEach(track => peerConnection?.addTrack(track, localStream!));
+    peerConnection = new RTCPeerConnection(configuration);
+    localStream.getTracks().forEach(track => peerConnection?.addTrack(track, localStream!));
 
-        peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-                chrome.runtime.sendMessage({ type: 'ICE_CANDIDATE', to: remoteId, candidate: event.candidate });
-            }
-        };
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        chrome.runtime.sendMessage({ type: 'ICE_CANDIDATE', to: remoteId, candidate: event.candidate });
+      }
+    };
 
-        peerConnection.ontrack = (event) => {
-            const remoteVideo = document.getElementById('remote-video') as HTMLVideoElement;
-            if (remoteVideo) remoteVideo.srcObject = event.streams[0];
-        };
+    peerConnection.ontrack = (event) => {
+      const remoteVideo = document.getElementById('remote-video') as HTMLVideoElement;
+      if (remoteVideo) remoteVideo.srcObject = event.streams[0];
+    };
 
-        if (isCaller) {
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            chrome.runtime.sendMessage({ type: 'SEND_OFFER', to: remoteId, offer });
-        }
-    } catch (err) {
-        console.error('Failed to start call:', err);
+    if (isCaller) {
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      chrome.runtime.sendMessage({ type: 'SEND_OFFER', to: remoteId, offer });
     }
+  } catch (err) {
+    console.error('Failed to start call:', err);
+  }
 }
 
 chrome.runtime.onMessage.addListener(async (message) => {
@@ -104,25 +118,26 @@ chrome.runtime.onMessage.addListener(async (message) => {
     const overlay = document.getElementById('call-overlay');
     if (overlay) {
       overlay.style.display = 'block';
-      document.getElementById('caller-id')!.innerText = message.from.id.substring(0, 8);
-      overlay.dataset.remoteId = message.from.id;
+      const fromId = typeof message.from === 'object' && message.from.id ? message.from.id : message.from;
+      document.getElementById('caller-id')!.innerText = fromId.substring(0, 8);
+      overlay.dataset.remoteId = fromId;
     }
   } else if (message.type === 'offer') {
-      await startCall(false, message.from);
-      await peerConnection?.setRemoteDescription(new RTCSessionDescription(message.payload));
-      const answer = await peerConnection?.createAnswer();
-      await peerConnection?.setLocalDescription(answer);
-      chrome.runtime.sendMessage({ type: 'SEND_ANSWER', to: message.from, answer });
+    await startCall(false, message.from);
+    await peerConnection?.setRemoteDescription(new RTCSessionDescription(message.payload));
+    const answer = await peerConnection?.createAnswer();
+    await peerConnection?.setLocalDescription(answer);
+    chrome.runtime.sendMessage({ type: 'SEND_ANSWER', to: message.from, answer });
   } else if (message.type === 'answer') {
-      await peerConnection?.setRemoteDescription(new RTCSessionDescription(message.payload));
+    await peerConnection?.setRemoteDescription(new RTCSessionDescription(message.payload));
   } else if (message.type === 'ice-candidate') {
-      await peerConnection?.addIceCandidate(new RTCIceCandidate(message.payload));
+    await peerConnection?.addIceCandidate(new RTCIceCandidate(message.payload));
   }
 });
 
 // UI Event Handlers
 document.getElementById('broadcast-btn')?.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'BROADCAST_REQUEST' });
+  chrome.runtime.sendMessage({ type: 'BROADCAST_REQUEST', slug: getSlug() });
   const btn = document.getElementById('broadcast-btn') as HTMLButtonElement;
   btn.innerText = 'Request Sent!';
   btn.disabled = true;
@@ -133,32 +148,34 @@ document.getElementById('broadcast-btn')?.addEventListener('click', () => {
 });
 
 document.getElementById('accept-call')?.addEventListener('click', () => {
-    const overlay = document.getElementById('call-overlay')!;
-    const remoteId = overlay.dataset.remoteId!;
-    overlay.style.display = 'none';
-    document.getElementById('video-container')!.style.display = 'block';
-    startCall(true, remoteId);
+  const overlay = document.getElementById('call-overlay')!;
+  const remoteId = overlay.dataset.remoteId!;
+  overlay.style.display = 'none';
+  document.getElementById('video-container')!.style.display = 'block';
+  startCall(true, remoteId);
 });
 
 document.getElementById('decline-call')?.addEventListener('click', () => {
-    document.getElementById('call-overlay')!.style.display = 'none';
+  document.getElementById('call-overlay')!.style.display = 'none';
 });
 
 document.getElementById('end-call')?.addEventListener('click', () => {
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-    }
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        localStream = null;
-    }
-    document.getElementById('video-container')!.style.display = 'none';
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  document.getElementById('video-container')!.style.display = 'none';
 });
 
 window.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'CALL_USER') {
-    chrome.runtime.sendMessage({ type: 'CALL_USER', to: event.data.to });
+    const videoContainer = document.getElementById('video-container');
+    if (videoContainer) videoContainer.style.display = 'block';
+    startCall(true, event.data.to);
   }
 });
 
@@ -169,21 +186,21 @@ let initialY: number;
 
 const handle = document.getElementById('drag-handle')!;
 handle.addEventListener('mousedown', (e) => {
-    isDragging = true;
-    initialX = e.clientX - container.offsetLeft;
-    initialY = e.clientY - container.offsetTop;
+  isDragging = true;
+  initialX = e.clientX - container.offsetLeft;
+  initialY = e.clientY - container.offsetTop;
 });
 
 document.addEventListener('mousemove', (e) => {
-    if (isDragging) {
-        e.preventDefault();
-        container.style.left = (e.clientX - initialX) + 'px';
-        container.style.top = (e.clientY - initialY) + 'px';
-        container.style.bottom = 'auto';
-        container.style.right = 'auto';
-    }
+  if (isDragging) {
+    e.preventDefault();
+    container.style.left = (e.clientX - initialX) + 'px';
+    container.style.top = (e.clientY - initialY) + 'px';
+    container.style.bottom = 'auto';
+    container.style.right = 'auto';
+  }
 });
 
 document.addEventListener('mouseup', () => {
-    isDragging = false;
+  isDragging = false;
 });
