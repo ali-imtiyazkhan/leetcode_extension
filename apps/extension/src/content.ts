@@ -1,4 +1,5 @@
-import { User } from '@leetcode-collab/types';
+import { User, ChatMessage } from '@leetcode-collab/types';
+import { SyncService } from './services/sync';
 
 console.log('LeetCode Collab content script loaded (TS)');
 
@@ -18,7 +19,24 @@ if (currentSlug) {
   });
 }
 
-// Support single-page application (SPA) navigation on LeetCode
+// Global state
+function injectScript() {
+  const script = document.createElement('script');
+  script.src = chrome.runtime.getURL('dist/inject.js');
+  (document.head || document.documentElement).appendChild(script);
+  script.onload = () => script.remove();
+}
+
+injectScript();
+
+function initSync() {
+  if (currentSlug) {
+    chrome.runtime.sendMessage({ type: 'UPDATE_SLUG', slug: currentSlug });
+  }
+}
+
+initSync();
+
 setInterval(() => {
   const newSlug = getSlug();
   if (newSlug !== currentSlug) {
@@ -26,6 +44,7 @@ setInterval(() => {
     if (currentSlug) {
       console.log('Slug changed view:', currentSlug);
       chrome.runtime.sendMessage({ type: 'UPDATE_SLUG', slug: currentSlug });
+      initSync();
     }
   }
 }, 2000);
@@ -43,25 +62,37 @@ container.id = 'leetcode-collab-root';
 container.innerHTML = `
   <div id="drag-handle">
     <span class="collab-label">Collaborators</span>
-    <span id="user-count">0</span>
-  </div>
-  <button id="broadcast-btn">
-    Broadcast Help Request 🚀
-  </button>
-  <div id="user-list">
-    <i>Scanning for users...</i>
-  </div>
-  <div id="call-overlay" style="display:none;">
-    <div style="font-size: 11px; margin-bottom: 8px;">Call from <span id="caller-id" style="color: #ffa116; font-weight: bold;">...</span></div>
-    <div class="overlay-actions">
-      <button id="accept-call" class="accept-btn">Accept</button>
-      <button id="decline-call" class="decline-btn">Decline</button>
+    <div style="display:flex; align-items:center; gap: 8px;">
+      <span id="user-count">0</span>
+      <button id="minimize-btn" title="Minimize/Expand">_</button>
     </div>
   </div>
-  <div id="video-container" style="display:none;">
-    <video id="remote-video" autoplay playsinline></video>
-    <video id="local-video" autoplay muted playsinline></video>
-    <button id="end-call" title="End Call">✕</button>
+  <div id="collab-content">
+    <button id="broadcast-btn">
+      Broadcast Help Request 🚀
+    </button>
+    <div id="user-list">
+      <i>Scanning for users...</i>
+    </div>
+    <div id="call-overlay" style="display:none;">
+      <div style="font-size: 11px; margin-bottom: 8px;">Call from <span id="caller-id" style="color: #ffa116; font-weight: bold;">...</span></div>
+      <div class="overlay-actions">
+        <button id="accept-call" class="accept-btn">Accept</button>
+        <button id="decline-call" class="decline-btn">Decline</button>
+      </div>
+    </div>
+    <div id="video-container" style="display:none;">
+      <video id="remote-video" autoplay playsinline></video>
+      <video id="local-video" autoplay muted playsinline></video>
+      <button id="end-call" title="End Call">✕</button>
+    </div>
+    <div id="chat-container">
+      <div id="chat-messages"></div>
+      <div class="chat-input-area">
+        <input type="text" id="chat-input" placeholder="Type a message..." />
+        <button id="send-chat-btn">Send</button>
+      </div>
+    </div>
   </div>
 `;
 
@@ -90,9 +121,28 @@ async function cleanupCall() {
 
 async function startCall(isCaller: boolean, remoteId: string) {
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    } catch (e: any) {
+      console.warn('Failed to get video/audio, trying audio only:', e);
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Hide local video if no video stream
+        const localVideo = document.getElementById('local-video') as HTMLVideoElement;
+        if (localVideo) localVideo.style.display = 'none';
+      } catch (audioErr: any) {
+        console.error('Failed to get audio too:', audioErr);
+        alert('Could not access microphone or camera. Please check your permissions or if another app is using them.');
+        cleanupCall();
+        return;
+      }
+    }
+    
     const localVideo = document.getElementById('local-video') as HTMLVideoElement;
-    if (localVideo) localVideo.srcObject = localStream;
+    if (localVideo && localStream.getVideoTracks().length > 0) {
+      localVideo.srcObject = localStream;
+      localVideo.style.display = 'block';
+    }
 
     peerConnection = new RTCPeerConnection(configuration);
     
@@ -113,14 +163,17 @@ async function startCall(isCaller: boolean, remoteId: string) {
     };
 
     peerConnection.ontrack = (event) => {
-      console.log('Received remote track:', event.track.kind);
+      console.log('Received remote track:', event.track.kind, event.streams);
       const remoteVideo = document.getElementById('remote-video') as HTMLVideoElement;
       if (remoteVideo) {
-        if (!remoteVideo.srcObject) {
-          remoteVideo.srcObject = new MediaStream();
+        if (event.streams && event.streams[0]) {
+          remoteVideo.srcObject = event.streams[0];
+        } else if (!remoteVideo.srcObject) {
+          remoteVideo.srcObject = new MediaStream([event.track]);
+        } else {
+          (remoteVideo.srcObject as MediaStream).addTrack(event.track);
         }
-        (remoteVideo.srcObject as MediaStream).addTrack(event.track);
-        remoteVideo.play().catch(e => console.log('Auto-play blocked or failed:', e));
+        remoteVideo.play().catch(e => console.error('Play failed:', e));
       }
     };
 
@@ -196,8 +249,43 @@ chrome.runtime.onMessage.addListener(async (message) => {
       console.log('Queuing ICE candidate');
       iceCandidateQueue.push(message.payload);
     }
+  } else if (message.type === 'sync_update') {
+    window.postMessage({
+      source: 'leetcode-collab-content',
+      type: 'APPLY_UPDATE',
+      update: message.update
+    }, '*');
+  } else if (message.type === 'new_message') {
+    addChatMessage(message);
   }
 });
+
+window.addEventListener('message', (event) => {
+  if (event.data && event.data.source === 'leetcode-collab-inject') {
+    if (event.data.type === 'YJS_UPDATE') {
+      chrome.runtime.sendMessage({
+        type: 'SYNC_UPDATE',
+        slug: currentSlug,
+        update: event.data.update
+      });
+    }
+  }
+});
+
+function addChatMessage(msg: ChatMessage) {
+  const chatMessages = document.getElementById('chat-messages');
+  if (chatMessages) {
+    const isMe = msg.from === myId;
+    const div = document.createElement('div');
+    div.className = `chat-msg ${isMe ? 'msg-me' : 'msg-them'}`;
+    div.innerHTML = `
+      <span class="msg-sender">${isMe ? 'Me' : 'User ' + msg.from.substring(0, 4)}</span>
+      <div class="msg-text">${msg.text}</div>
+    `;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+}
 
 // UI Event Handlers
 document.getElementById('broadcast-btn')?.addEventListener('click', () => {
@@ -234,6 +322,28 @@ document.getElementById('decline-call')?.addEventListener('click', () => {
 
 document.getElementById('end-call')?.addEventListener('click', () => {
   cleanupCall();
+});
+
+document.getElementById('send-chat-btn')?.addEventListener('click', () => {
+  const input = document.getElementById('chat-input') as HTMLInputElement;
+  const text = input.value.trim();
+  if (text && currentSlug) {
+    chrome.runtime.sendMessage({ type: 'SEND_CHAT', slug: currentSlug, text });
+    input.value = '';
+  }
+});
+
+document.getElementById('chat-input')?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') {
+    document.getElementById('send-chat-btn')?.click();
+  }
+});
+
+document.getElementById('minimize-btn')?.addEventListener('click', () => {
+  const content = document.getElementById('collab-content')!;
+  const isMinimized = content.style.display === 'none';
+  content.style.display = isMinimized ? 'block' : 'none';
+  document.getElementById('minimize-btn')!.innerText = isMinimized ? '_' : '+';
 });
 
 window.addEventListener('message', (event) => {
