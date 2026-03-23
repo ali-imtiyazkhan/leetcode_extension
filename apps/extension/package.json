@@ -7,7 +7,8 @@
   },
   "dependencies": {
     "@leetcode-collab/types": "*",
-    "peerjs": "^1.5.5"
+    "peerjs": "^1.5.5",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.243",
