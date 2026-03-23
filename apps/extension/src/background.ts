@@ -3,6 +3,7 @@ import { User, SignalMessage } from '@leetcode-collab/types';
 
 let socket: Socket | null = null;
 let currentSlug: string | null = null;
+const tabSlugs = new Map<number, string>();
 
 const BACKEND_URL = "http://127.0.0.1:3001";
 
@@ -46,10 +47,13 @@ function connect() {
 }
 
 function handleSocketEvent(type: string, payload: any) {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0] && tabs[0].id) {
-      chrome.tabs.sendMessage(tabs[0].id, { ...payload, type, myId: socket?.id });
-    }
+  console.log('Broadcasting socket event:', type, 'to slug:', currentSlug);
+  chrome.tabs.query({}, (tabs) => {
+    tabs.forEach(tab => {
+      if (tab.id && tabSlugs.get(tab.id) === currentSlug) {
+        chrome.tabs.sendMessage(tab.id, { ...payload, type, myId: socket?.id });
+      }
+    });
   });
 }
 
@@ -58,6 +62,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'UPDATE_SLUG') {
     currentSlug = message.slug;
+    if (sender.tab?.id) {
+      tabSlugs.set(sender.tab.id, message.slug);
+    }
     socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id } });
     if (socket?.id) {
       sendResponse({ myId: socket.id });

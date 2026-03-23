@@ -95,6 +95,15 @@ async function startCall(isCaller: boolean, remoteId: string) {
     if (localVideo) localVideo.srcObject = localStream;
 
     peerConnection = new RTCPeerConnection(configuration);
+    
+    peerConnection.onconnectionstatechange = () => {
+      console.log('Connection State:', peerConnection?.connectionState);
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+      console.log('ICE Connection State:', peerConnection?.iceConnectionState);
+    };
+
     localStream.getTracks().forEach(track => peerConnection?.addTrack(track, localStream!));
 
     peerConnection.onicecandidate = (event) => {
@@ -104,11 +113,14 @@ async function startCall(isCaller: boolean, remoteId: string) {
     };
 
     peerConnection.ontrack = (event) => {
-      console.log('Received remote track:', event.streams[0]);
+      console.log('Received remote track:', event.track.kind);
       const remoteVideo = document.getElementById('remote-video') as HTMLVideoElement;
       if (remoteVideo) {
-        remoteVideo.srcObject = event.streams[0];
-        remoteVideo.play().catch(e => console.error('Failed to play remote video:', e));
+        if (!remoteVideo.srcObject) {
+          remoteVideo.srcObject = new MediaStream();
+        }
+        (remoteVideo.srcObject as MediaStream).addTrack(event.track);
+        remoteVideo.play().catch(e => console.log('Auto-play blocked or failed:', e));
       }
     };
 
