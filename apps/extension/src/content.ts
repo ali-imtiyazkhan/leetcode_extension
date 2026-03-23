@@ -7,9 +7,15 @@ function getSlug(): string | null {
   return parts.includes('problems') ? parts[parts.indexOf('problems') + 1] : null;
 }
 
+let myId: string | null = null;
 let currentSlug = getSlug();
 if (currentSlug) {
-  chrome.runtime.sendMessage({ type: 'UPDATE_SLUG', slug: currentSlug });
+  chrome.runtime.sendMessage({ type: 'UPDATE_SLUG', slug: currentSlug }, (response) => {
+    if (response && response.myId) {
+      myId = response.myId;
+      console.log('Registered own ID:', myId);
+    }
+  });
 }
 
 // Support single-page application (SPA) navigation on LeetCode
@@ -27,46 +33,60 @@ setInterval(() => {
 // Global state for WebRTC
 let peerConnection: RTCPeerConnection | null = null;
 let localStream: MediaStream | null = null;
+let pendingOffer: any = null;
+let iceCandidateQueue: RTCIceCandidateInit[] = [];
 const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 // Injected UI
 const container = document.createElement('div');
 container.id = 'leetcode-collab-root';
-container.style.cssText = `
-  position: fixed; bottom: 20px; right: 20px; z-index: 9999;
-  background: #1e1e1e; color: white; padding: 15px; border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.6); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  width: 280px; border: 1px solid #333; cursor: default;
-`;
-
 container.innerHTML = `
-  <div id="drag-handle" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; cursor: move; border-bottom: 1px solid #333; padding-bottom: 8px;">
-    <span style="font-weight: 600; color: #ffa116;">Collaborators</span>
-    <span id="user-count" style="font-size: 11px; background: #333; padding: 2px 6px; border-radius: 10px;">0</span>
+  <div id="drag-handle">
+    <span class="collab-label">Collaborators</span>
+    <span id="user-count">0</span>
   </div>
-  <button id="broadcast-btn" style="width: 100%; background: linear-gradient(90deg, #ffa116, #ff7a00); border: none; color: black; font-weight: bold; border-radius: 8px; padding: 10px; cursor: pointer; margin-bottom: 15px; font-size: 13px; box-shadow: 0 4px 10px rgba(255,161,22,0.2);">
+  <button id="broadcast-btn">
     Broadcast Help Request 🚀
   </button>
-  <div id="user-list" style="max-height: 150px; overflow-y: auto; font-size: 13px;">
+  <div id="user-list">
     <i>Scanning for users...</i>
   </div>
-  <div id="call-overlay" style="display:none; margin-top: 15px; border-top: 1px solid #333; padding-top: 10px; background: #1a1a1a; padding: 10px; border-radius: 8px;">
+  <div id="call-overlay" style="display:none;">
     <div style="font-size: 11px; margin-bottom: 8px;">Call from <span id="caller-id" style="color: #ffa116; font-weight: bold;">...</span></div>
-    <div style="display: flex; gap: 8px;">
-      <button id="accept-call" style="background: #28a745; color: white; border: none; border-radius: 4px; padding: 6px 10px; cursor: pointer; flex: 1; font-weight: bold; font-size: 12px;">Accept</button>
-      <button id="decline-call" style="background: #dc3545; color: white; border: none; border-radius: 4px; padding: 6px 10px; cursor: pointer; flex: 1; font-weight: bold; font-size: 12px;">Decline</button>
+    <div class="overlay-actions">
+      <button id="accept-call" class="accept-btn">Accept</button>
+      <button id="decline-call" class="decline-btn">Decline</button>
     </div>
   </div>
-  <div id="video-container" style="display:none; position: relative; width: 100%; height: 180px; border-radius: 12px; overflow: hidden; background: #000; margin-top: 15px; border: 1px solid #333;">
-    <video id="remote-video" autoplay style="width: 100%; height: 100%; object-fit: cover;"></video>
-    <video id="local-video" autoplay muted style="position: absolute; bottom: 8px; right: 8px; width: 65px; height: 85px; border-radius: 8px; object-fit: cover; border: 2px solid #222; box-shadow: 0 4px 10px rgba(0,0,0,0.4); z-index: 10;"></video>
-    <button id="end-call" style="position: absolute; bottom: 8px; left: 8px; background: #ff3b30; color: white; border: none; border-radius: 50%; width: 34px; height: 34px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); z-index: 10;" title="End Call">
-      ✕
-    </button>
+  <div id="video-container" style="display:none;">
+    <video id="remote-video" autoplay playsinline></video>
+    <video id="local-video" autoplay muted playsinline></video>
+    <button id="end-call" title="End Call">✕</button>
   </div>
 `;
 
 document.body.appendChild(container);
+
+async function cleanupCall() {
+  console.log('Cleaning up call...');
+  if (peerConnection) {
+    peerConnection.close();
+    peerConnection = null;
+  }
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  const remoteVideo = document.getElementById('remote-video') as HTMLVideoElement;
+  const localVideo = document.getElementById('local-video') as HTMLVideoElement;
+  if (remoteVideo) remoteVideo.srcObject = null;
+  if (localVideo) localVideo.srcObject = null;
+  
+  const videoContainer = document.getElementById('video-container');
+  if (videoContainer) videoContainer.style.display = 'none';
+  pendingOffer = null;
+  iceCandidateQueue = [];
+}
 
 async function startCall(isCaller: boolean, remoteId: string) {
   try {
@@ -84,31 +104,52 @@ async function startCall(isCaller: boolean, remoteId: string) {
     };
 
     peerConnection.ontrack = (event) => {
+      console.log('Received remote track:', event.streams[0]);
       const remoteVideo = document.getElementById('remote-video') as HTMLVideoElement;
-      if (remoteVideo) remoteVideo.srcObject = event.streams[0];
+      if (remoteVideo) {
+        remoteVideo.srcObject = event.streams[0];
+        remoteVideo.play().catch(e => console.error('Failed to play remote video:', e));
+      }
     };
 
     if (isCaller) {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
       chrome.runtime.sendMessage({ type: 'SEND_OFFER', to: remoteId, offer });
+    } else if (pendingOffer) {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(pendingOffer));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      chrome.runtime.sendMessage({ type: 'SEND_ANSWER', to: remoteId, answer });
+      pendingOffer = null;
+      
+      // Process queued candidates
+      console.log('Processing queued candidates:', iceCandidateQueue.length);
+      while (iceCandidateQueue.length > 0) {
+        const candidate = iceCandidateQueue.shift()!;
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      }
     }
   } catch (err) {
     console.error('Failed to start call:', err);
+    cleanupCall();
   }
 }
 
 chrome.runtime.onMessage.addListener(async (message) => {
+  console.log('Received message in content script:', message.type, message);
+  
+  if (message.myId) myId = message.myId;
+
   if (message.type === 'room_users') {
-    const users = message.users as User[];
+    const users = (message.users as User[]).filter(u => u.id !== myId);
     const list = document.getElementById('user-list');
     if (list) {
       document.getElementById('user-count')!.innerText = users.length.toString();
       list.innerHTML = users.length > 0 ? users.map(u => `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; background: #2a2a2a; padding: 6px; border-radius: 6px;">
+        <div class="user-item">
           <span style="font-size: 11px;">User ${u.id.substring(0, 4)}</span>
-          <button onclick="window.postMessage({type: 'CALL_USER', to: '${u.id}'}, '*')" 
-                  style="background: transparent; border: 1px solid #ffa116; color: #ffa116; border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 10px;">
+          <button onclick="window.postMessage({type: 'CALL_USER', to: '${u.id}'}, '*')" class="call-btn">
             Call
           </button>
         </div>
@@ -123,15 +164,26 @@ chrome.runtime.onMessage.addListener(async (message) => {
       overlay.dataset.remoteId = fromId;
     }
   } else if (message.type === 'offer') {
-    await startCall(false, message.from);
-    await peerConnection?.setRemoteDescription(new RTCSessionDescription(message.payload));
-    const answer = await peerConnection?.createAnswer();
-    await peerConnection?.setLocalDescription(answer);
-    chrome.runtime.sendMessage({ type: 'SEND_ANSWER', to: message.from, answer });
+    // We received an offer. Show the overlay instead of starting immediately.
+    pendingOffer = message.payload;
+    const overlay = document.getElementById('call-overlay');
+    if (overlay) {
+      overlay.style.display = 'block';
+      document.getElementById('caller-id')!.innerText = message.from.substring(0, 8);
+      overlay.dataset.remoteId = message.from;
+    }
   } else if (message.type === 'answer') {
-    await peerConnection?.setRemoteDescription(new RTCSessionDescription(message.payload));
+    if (peerConnection) {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(message.payload));
+      // If we are caller, we might also have queued candidates? Usually candidates arrive after offer/answer.
+    }
   } else if (message.type === 'ice-candidate') {
-    await peerConnection?.addIceCandidate(new RTCIceCandidate(message.payload));
+    if (peerConnection && peerConnection.remoteDescription) {
+      await peerConnection.addIceCandidate(new RTCIceCandidate(message.payload));
+    } else {
+      console.log('Queuing ICE candidate');
+      iceCandidateQueue.push(message.payload);
+    }
   }
 });
 
@@ -139,36 +191,37 @@ chrome.runtime.onMessage.addListener(async (message) => {
 document.getElementById('broadcast-btn')?.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'BROADCAST_REQUEST', slug: getSlug() });
   const btn = document.getElementById('broadcast-btn') as HTMLButtonElement;
+  const originalText = btn.innerText;
   btn.innerText = 'Request Sent!';
   btn.disabled = true;
   setTimeout(() => {
-    btn.innerText = 'Broadcast Help Request 🚀';
+    btn.innerText = originalText;
     btn.disabled = false;
   }, 5000);
 });
 
-document.getElementById('accept-call')?.addEventListener('click', () => {
+document.getElementById('accept-call')?.addEventListener('click', async () => {
   const overlay = document.getElementById('call-overlay')!;
   const remoteId = overlay.dataset.remoteId!;
   overlay.style.display = 'none';
   document.getElementById('video-container')!.style.display = 'block';
-  startCall(true, remoteId);
+  
+  if (pendingOffer) {
+    // If we have a pending offer, start as receiver
+    await startCall(false, remoteId);
+  } else {
+    // Otherwise, start as caller (should not happen in normal flow but for safety)
+    await startCall(true, remoteId);
+  }
 });
 
 document.getElementById('decline-call')?.addEventListener('click', () => {
   document.getElementById('call-overlay')!.style.display = 'none';
+  pendingOffer = null;
 });
 
 document.getElementById('end-call')?.addEventListener('click', () => {
-  if (peerConnection) {
-    peerConnection.close();
-    peerConnection = null;
-  }
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-    localStream = null;
-  }
-  document.getElementById('video-container')!.style.display = 'none';
+  cleanupCall();
 });
 
 window.addEventListener('message', (event) => {

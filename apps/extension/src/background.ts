@@ -4,10 +4,12 @@ import { User, SignalMessage } from '@leetcode-collab/types';
 let socket: Socket | null = null;
 let currentSlug: string | null = null;
 
+const BACKEND_URL = "http://127.0.0.1:3001";
+
 function connect() {
-  // Use http://127.0.0.1:3001 to bypass local DNS ipv6 quirks if any on windows solvers
-  socket = io("http://127.0.0.1:3001", {
-    transports: ['websocket'], // Force websocket for extension context
+  console.log('Connecting to backend:', BACKEND_URL);
+  socket = io(BACKEND_URL, {
+    transports: ['websocket'],
   });
 
   socket.on('connect', () => {
@@ -22,7 +24,8 @@ function connect() {
   });
 
   socket.on('incoming_call', (data) => {
-    handleSocketEvent('incoming_call', data);
+    const type = data.type || 'incoming_call';
+    handleSocketEvent(type, data);
   });
 
   socket.on('incoming_broadcast', (data) => {
@@ -45,15 +48,20 @@ function connect() {
 function handleSocketEvent(type: string, payload: any) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0] && tabs[0].id) {
-      chrome.tabs.sendMessage(tabs[0].id, { type, ...payload });
+      chrome.tabs.sendMessage(tabs[0].id, { ...payload, type, myId: socket?.id });
     }
   });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('Background received message:', message.type);
+
   if (message.type === 'UPDATE_SLUG') {
     currentSlug = message.slug;
     socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id } });
+    if (socket?.id) {
+      sendResponse({ myId: socket.id });
+    }
   } else if (message.type === 'BROADCAST_REQUEST') {
     const activeSlug = message.slug || currentSlug;
     socket?.emit('broadcast_invite', { slug: activeSlug, from: { id: socket?.id || 'unknown' } }); 
@@ -64,8 +72,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === 'ICE_CANDIDATE') {
     socket?.emit('ice_candidate', { to: message.to, from: socket?.id, type: 'ice-candidate', payload: message.candidate });
   } else if (message.type === 'GET_STATUS') {
-    sendResponse({ status: 'Connected to LeetCollab Backend' });
+    sendResponse({ status: 'Connected', socketId: socket?.id });
   }
+  
+  return true;
 });
 
 connect();
