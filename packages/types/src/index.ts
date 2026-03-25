@@ -14,3 +14,16 @@ export interface SignalMessage {
   from: string;
   to: string;
 }
+
+export interface SyncMessage {
+  slug: string;
+  update: Uint8Array | number[]; // Socket.io might serialize Uint8Array as number[] or Buffer
+  from: string;
+}
+
+export interface ChatMessage {
+  slug: string;
+  from: string;
+  text: string;
+  timestamp: number;
+}

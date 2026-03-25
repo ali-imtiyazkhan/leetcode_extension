@@ -35,20 +35,6 @@
   border-radius: 10px;
 }
 
-#broadcast-btn {
-  width: 100%;
-  background: linear-gradient(90deg, #ffa116, #ff7a00);
-  border: none;
-  color: black;
-  font-weight: bold;
-  border-radius: 8px;
-  padding: 10px;
-  cursor: pointer;
-  margin-bottom: 15px;
-  font-size: 13px;
-  box-shadow: 0 4px 10px rgba(255,161,22,0.2);
-}
-
 #user-list {
   max-height: 150px;
   overflow-y: auto;
@@ -163,3 +149,23 @@
   box-shadow: 0 4px 10px rgba(0,0,0,0.5);
   z-index: 10;
 }
+
+#minimize-btn {
+  background: #333;
+  color: #ffa116;
+  border: 1px solid #444;
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+#minimize-btn:hover {
+  background: #444;
+}
+

@@ -1,4 +1,4 @@
-import { User } from '@leetcode-collab/types';
+import { User, ChatMessage } from '@leetcode-collab/types';
 
 console.log('LeetCode Collab content script loaded (TS)');
 
@@ -18,7 +18,16 @@ if (currentSlug) {
   });
 }
 
-// Support single-page application (SPA) navigation on LeetCode
+// Global state
+
+function initSync() {
+  if (currentSlug) {
+    chrome.runtime.sendMessage({ type: 'UPDATE_SLUG', slug: currentSlug });
+  }
+}
+
+initSync();
+
 setInterval(() => {
   const newSlug = getSlug();
   if (newSlug !== currentSlug) {
@@ -26,6 +35,7 @@ setInterval(() => {
     if (currentSlug) {
       console.log('Slug changed view:', currentSlug);
       chrome.runtime.sendMessage({ type: 'UPDATE_SLUG', slug: currentSlug });
+      initSync();
     }
   }
 }, 2000);
@@ -42,26 +52,28 @@ const container = document.createElement('div');
 container.id = 'leetcode-collab-root';
 container.innerHTML = `
   <div id="drag-handle">
-    <span class="collab-label">Collaborators</span>
-    <span id="user-count">0</span>
-  </div>
-  <button id="broadcast-btn">
-    Broadcast Help Request 🚀
-  </button>
-  <div id="user-list">
-    <i>Scanning for users...</i>
-  </div>
-  <div id="call-overlay" style="display:none;">
-    <div style="font-size: 11px; margin-bottom: 8px;">Call from <span id="caller-id" style="color: #ffa116; font-weight: bold;">...</span></div>
-    <div class="overlay-actions">
-      <button id="accept-call" class="accept-btn">Accept</button>
-      <button id="decline-call" class="decline-btn">Decline</button>
+    <span class="collab-label">Voice & Video</span>
+    <div style="display:flex; align-items:center; gap: 8px;">
+      <span id="user-count">0</span>
+      <button id="minimize-btn" title="Minimize/Expand">_</button>
     </div>
   </div>
-  <div id="video-container" style="display:none;">
-    <video id="remote-video" autoplay playsinline></video>
-    <video id="local-video" autoplay muted playsinline></video>
-    <button id="end-call" title="End Call">✕</button>
+  <div id="collab-content">
+    <div id="user-list">
+      <i>Scanning for users...</i>
+    </div>
+    <div id="call-overlay" style="display:none;">
+      <div style="font-size: 11px; margin-bottom: 8px;">Call from <span id="caller-id" style="color: #ffa116; font-weight: bold;">...</span></div>
+      <div class="overlay-actions">
+        <button id="accept-call" class="accept-btn">Accept</button>
+        <button id="decline-call" class="decline-btn">Decline</button>
+      </div>
+    </div>
+    <div id="video-container" style="display:none;">
+      <video id="remote-video" autoplay playsinline></video>
+      <video id="local-video" autoplay muted playsinline></video>
+      <button id="end-call" title="End Call">✕</button>
+    </div>
   </div>
 `;
 
@@ -90,9 +102,28 @@ async function cleanupCall() {
 
 async function startCall(isCaller: boolean, remoteId: string) {
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    } catch (e: any) {
+      console.warn('Failed to get video/audio, trying audio only:', e);
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Hide local video if no video stream
+        const localVideo = document.getElementById('local-video') as HTMLVideoElement;
+        if (localVideo) localVideo.style.display = 'none';
+      } catch (audioErr: any) {
+        console.error('Failed to get audio too:', audioErr);
+        alert('Could not access microphone or camera. Please check your permissions or if another app is using them.');
+        cleanupCall();
+        return;
+      }
+    }
+    
     const localVideo = document.getElementById('local-video') as HTMLVideoElement;
-    if (localVideo) localVideo.srcObject = localStream;
+    if (localVideo && localStream.getVideoTracks().length > 0) {
+      localVideo.srcObject = localStream;
+      localVideo.style.display = 'block';
+    }
 
     peerConnection = new RTCPeerConnection(configuration);
     
@@ -113,14 +144,17 @@ async function startCall(isCaller: boolean, remoteId: string) {
     };
 
     peerConnection.ontrack = (event) => {
-      console.log('Received remote track:', event.track.kind);
+      console.log('Received remote track:', event.track.kind, event.streams);
       const remoteVideo = document.getElementById('remote-video') as HTMLVideoElement;
       if (remoteVideo) {
-        if (!remoteVideo.srcObject) {
-          remoteVideo.srcObject = new MediaStream();
+        if (event.streams && event.streams[0]) {
+          remoteVideo.srcObject = event.streams[0];
+        } else if (!remoteVideo.srcObject) {
+          remoteVideo.srcObject = new MediaStream([event.track]);
+        } else {
+          (remoteVideo.srcObject as MediaStream).addTrack(event.track);
         }
-        (remoteVideo.srcObject as MediaStream).addTrack(event.track);
-        remoteVideo.play().catch(e => console.log('Auto-play blocked or failed:', e));
+        remoteVideo.play().catch(e => console.error('Play failed:', e));
       }
     };
 
@@ -200,18 +234,6 @@ chrome.runtime.onMessage.addListener(async (message) => {
 });
 
 // UI Event Handlers
-document.getElementById('broadcast-btn')?.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'BROADCAST_REQUEST', slug: getSlug() });
-  const btn = document.getElementById('broadcast-btn') as HTMLButtonElement;
-  const originalText = btn.innerText;
-  btn.innerText = 'Request Sent!';
-  btn.disabled = true;
-  setTimeout(() => {
-    btn.innerText = originalText;
-    btn.disabled = false;
-  }, 5000);
-});
-
 document.getElementById('accept-call')?.addEventListener('click', async () => {
   const overlay = document.getElementById('call-overlay')!;
   const remoteId = overlay.dataset.remoteId!;
@@ -234,6 +256,13 @@ document.getElementById('decline-call')?.addEventListener('click', () => {
 
 document.getElementById('end-call')?.addEventListener('click', () => {
   cleanupCall();
+});
+
+document.getElementById('minimize-btn')?.addEventListener('click', () => {
+  const content = document.getElementById('collab-content')!;
+  const isMinimized = content.style.display === 'none';
+  content.style.display = isMinimized ? 'block' : 'none';
+  document.getElementById('minimize-btn')!.innerText = isMinimized ? '_' : '+';
 });
 
 window.addEventListener('message', (event) => {

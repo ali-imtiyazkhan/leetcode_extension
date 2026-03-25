@@ -2,13 +2,17 @@
   "name": "@leetcode-collab/extension",
   "version": "1.0.0",
   "scripts": {
-    "dev": "esbuild src/background.ts src/content.ts src/popup.ts --bundle --outdir=dist --watch",
-    "build": "esbuild src/background.ts src/content.ts src/popup.ts --bundle --outdir=dist"
+    "dev": "esbuild src/background.ts src/content.ts src/popup.ts src/inject.ts --bundle --outdir=dist --watch",
+    "build": "esbuild src/background.ts src/content.ts src/popup.ts src/inject.ts --bundle --outdir=dist"
   },
   "dependencies": {
     "@leetcode-collab/types": "*",
+    "lib0": "^0.2.117",
     "peerjs": "^1.5.5",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "y-monaco": "^0.1.6",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.30"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.243",

@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import { User, SignalMessage } from '@leetcode-collab/types';
+import { User, SignalMessage, SyncMessage, ChatMessage } from '@leetcode-collab/types';
 
 const app = express();
 app.use(cors());
@@ -57,6 +57,14 @@ io.on('connection', (socket) => {
 
   socket.on('ice_candidate', (data: SignalMessage) => {
     io.to(data.to).emit('ice_candidate', data);
+  });
+  
+  socket.on('sync_update', (data: SyncMessage) => {
+    socket.to(data.slug).emit('sync_update', data);
+  });
+
+  socket.on('send_message', (data: ChatMessage) => {
+    io.to(data.slug).emit('new_message', data);
   });
 });
 

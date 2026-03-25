@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { User, SignalMessage } from '@leetcode-collab/types';
+import { User, SignalMessage, SyncMessage, ChatMessage } from '@leetcode-collab/types';
 
 let socket: Socket | null = null;
 let currentSlug: string | null = null;
@@ -41,6 +41,14 @@ function connect() {
     handleSocketEvent('ice-candidate', data);
   });
 
+  socket.on('sync_update', (data) => {
+    handleSocketEvent('sync_update', data);
+  });
+
+  socket.on('new_message', (data) => {
+    handleSocketEvent('new_message', data);
+  });
+
   socket.on('disconnect', () => {
     console.log('Disconnected from backend');
   });
@@ -80,6 +88,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     socket?.emit('ice_candidate', { to: message.to, from: socket?.id, type: 'ice-candidate', payload: message.candidate });
   } else if (message.type === 'GET_STATUS') {
     sendResponse({ status: 'Connected', socketId: socket?.id });
+  } else if (message.type === 'SYNC_UPDATE') {
+    socket?.emit('sync_update', { slug: message.slug, update: message.update, from: socket?.id });
+  } else if (message.type === 'SEND_CHAT') {
+    socket?.emit('send_message', { 
+      slug: message.slug, 
+      from: socket?.id, 
+      text: message.text, 
+      timestamp: Date.now() 
+    });
   }
   
   return true;
