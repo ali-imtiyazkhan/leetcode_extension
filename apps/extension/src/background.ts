@@ -16,7 +16,9 @@ function connect() {
   socket.on('connect', () => {
     console.log('Connected to backend:', socket?.id);
     if (currentSlug) {
-      socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id } });
+      chrome.storage.local.get(['username'], (result) => {
+        socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id, name: result.username } });
+      });
     }
   });
 
@@ -73,13 +75,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.tab?.id) {
       tabSlugs.set(sender.tab.id, message.slug);
     }
-    socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id } });
+    chrome.storage.local.get(['username'], (result) => {
+      socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id, name: result.username } });
+    });
     if (socket?.id) {
       sendResponse({ myId: socket.id });
     }
+  } else if (message.type === 'UPDATE_USER_INFO') {
+    if (currentSlug) {
+      chrome.storage.local.get(['username'], (result) => {
+        socket?.emit('join_problem', { slug: currentSlug, user: { id: socket?.id, name: result.username } });
+      });
+    }
   } else if (message.type === 'BROADCAST_REQUEST') {
     const activeSlug = message.slug || currentSlug;
-    socket?.emit('broadcast_invite', { slug: activeSlug, from: { id: socket?.id || 'unknown' } }); 
+    chrome.storage.local.get(['username'], (result) => {
+      socket?.emit('broadcast_invite', { slug: activeSlug, from: { id: socket?.id || 'unknown', name: result.username } }); 
+    });
   } else if (message.type === 'SEND_OFFER') {
     socket?.emit('call_user', { to: message.to, from: socket?.id, type: 'offer', payload: message.offer });
   } else if (message.type === 'SEND_ANSWER') {

@@ -9,6 +9,17 @@
 <body>
   <div class="header">LeetCode Collab</div>
   <div id="status">Connecting...</div>
-  <script src="popup.js"></script>
+
+  <div id="auth-container" style="display: none; margin-top: 15px;">
+    <input type="text" id="username" placeholder="Enter your name" style="margin-bottom: 8px; width: 100%; border: 1px solid #333; padding: 6px; box-sizing: border-box; background: #333; color: white; border-radius: 4px;" />
+    <button id="login-btn" style="width: 100%; background: #ffa116; color: white; border: none; padding: 6px; border-radius: 4px; cursor: pointer; font-weight: bold;">Sign In</button>
+  </div>
+  
+  <div id="user-info" style="display: none; margin-top: 15px; font-size: 12px;">
+    Signed in as: <strong id="display-name" style="color: #ffa116;"></strong>
+    <button id="logout-btn" style="margin-left: 8px; background: transparent; border: 1px solid #dc3545; color: #dc3545; padding: 2px 6px; border-radius: 4px; cursor: pointer; font-size: 10px;">Logout</button>
+  </div>
+
+  <script src="../dist/popup.js"></script>
 </body>
 </html>

@@ -19,6 +19,7 @@ if (currentSlug) {
 }
 
 // Global state
+let roomUsers: User[] = [];
 
 function initSync() {
   if (currentSlug) {
@@ -62,8 +63,15 @@ container.innerHTML = `
     <div id="user-list">
       <i>Scanning for users...</i>
     </div>
+    <div id="chat-container" style="display: flex; flex-direction: column; height: 150px; margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;">
+      <div id="chat-messages" style="flex: 1; overflow-y: auto; font-size: 11px; margin-bottom: 5px; display: flex; flex-direction: column; gap: 4px;"></div>
+      <div style="display: flex;">
+        <input type="text" id="chat-input" placeholder="Type a message..." style="flex: 1; font-size: 11px; padding: 4px; background: #333; color: white; border: 1px solid #444; border-radius: 4px;" />
+        <button id="chat-send" style="margin-left: 4px; padding: 4px 8px; font-size: 11px; background: #ffa116; color: white; border: none; border-radius: 4px; cursor: pointer;">Send</button>
+      </div>
+    </div>
     <div id="call-overlay" style="display:none;">
-      <div style="font-size: 11px; margin-bottom: 8px;">Call from <span id="caller-id" style="color: #ffa116; font-weight: bold;">...</span></div>
+      <div style="font-size: 11px; margin-bottom: 8px;"><span id="caller-id" style="color: #ffa116; font-weight: bold;">...</span></div>
       <div class="overlay-actions">
         <button id="accept-call" class="accept-btn">Accept</button>
         <button id="decline-call" class="decline-btn">Decline</button>
@@ -188,25 +196,35 @@ chrome.runtime.onMessage.addListener(async (message) => {
   if (message.myId) myId = message.myId;
 
   if (message.type === 'room_users') {
-    const users = (message.users as User[]).filter(u => u.id !== myId);
+    roomUsers = message.users as User[];
+    const users = roomUsers.filter(u => u.id !== myId);
     const list = document.getElementById('user-list');
     if (list) {
       document.getElementById('user-count')!.innerText = users.length.toString();
-      list.innerHTML = users.length > 0 ? users.map(u => `
+      list.innerHTML = users.length > 0 ? users.map(u => {
+        const displayName = u.name || `User ${u.id.substring(0, 4)}`;
+        return `
         <div class="user-item">
-          <span style="font-size: 11px;">User ${u.id.substring(0, 4)}</span>
+          <span style="font-size: 11px;">${displayName}</span>
           <button onclick="window.postMessage({type: 'CALL_USER', to: '${u.id}'}, '*')" class="call-btn">
             Call
           </button>
         </div>
-      `).join('') : '<i style="font-size: 11px; color: #666;">No other users here...</i>';
+      `}).join('') : '<i style="font-size: 11px; color: #666;">No other users here...</i>';
     }
   } else if (message.type === 'incoming_broadcast' || message.type === 'incoming_call') {
     const overlay = document.getElementById('call-overlay');
     if (overlay) {
       overlay.style.display = 'block';
-      const fromId = typeof message.from === 'object' && message.from.id ? message.from.id : message.from;
-      document.getElementById('caller-id')!.innerText = fromId.substring(0, 8);
+      let fromId = '';
+      if (typeof message.from === 'object' && message.from.id) {
+          fromId = message.from.id;
+      } else {
+          fromId = message.from;
+      }
+      const remoteUser = typeof message.from === 'object' ? message.from : roomUsers.find(u => u.id === fromId);
+      const displayName = remoteUser?.name || fromId.substring(0, 8);
+      document.getElementById('caller-id')!.innerText = `${displayName} sent a request`;
       overlay.dataset.remoteId = fromId;
     }
   } else if (message.type === 'offer') {
@@ -215,13 +233,15 @@ chrome.runtime.onMessage.addListener(async (message) => {
     const overlay = document.getElementById('call-overlay');
     if (overlay) {
       overlay.style.display = 'block';
-      document.getElementById('caller-id')!.innerText = message.from.substring(0, 8);
+      const fromId = message.from;
+      const remoteUser = roomUsers.find(u => u.id === fromId);
+      const displayName = remoteUser?.name || fromId.substring(0, 8);
+      document.getElementById('caller-id')!.innerText = `${displayName} sent a request`;
       overlay.dataset.remoteId = message.from;
     }
   } else if (message.type === 'answer') {
     if (peerConnection) {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(message.payload));
-      // If we are caller, we might also have queued candidates? Usually candidates arrive after offer/answer.
     }
   } else if (message.type === 'ice-candidate') {
     if (peerConnection && peerConnection.remoteDescription) {
@@ -229,6 +249,20 @@ chrome.runtime.onMessage.addListener(async (message) => {
     } else {
       console.log('Queuing ICE candidate');
       iceCandidateQueue.push(message.payload);
+    }
+  } else if (message.type === 'new_message') {
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) {
+      const isMe = message.from === myId;
+      const sender = roomUsers.find(u => u.id === message.from);
+      const displayName = isMe ? 'Me' : (sender?.name || `User ${message.from.substring(0, 4)}`);
+      const msgDiv = document.createElement('div');
+      msgDiv.style.background = isMe ? '#2a2a2a' : '#333';
+      msgDiv.style.padding = '4px 6px';
+      msgDiv.style.borderRadius = '4px';
+      msgDiv.innerHTML = `<strong style="color: ${isMe ? '#4caf50' : '#ffa116'};">${displayName}:</strong> ${message.text}`;
+      chatMessages.appendChild(msgDiv);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
     }
   }
 });
@@ -270,6 +304,21 @@ window.addEventListener('message', (event) => {
     const videoContainer = document.getElementById('video-container');
     if (videoContainer) videoContainer.style.display = 'block';
     startCall(true, event.data.to);
+  }
+});
+
+document.getElementById('chat-send')?.addEventListener('click', () => {
+  const input = document.getElementById('chat-input') as HTMLInputElement;
+  const text = input.value.trim();
+  if (text && currentSlug) {
+    chrome.runtime.sendMessage({ type: 'SEND_CHAT', slug: currentSlug, text });
+    input.value = '';
+  }
+});
+
+document.getElementById('chat-input')?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') {
+    document.getElementById('chat-send')?.click();
   }
 });
 
